@@ -129,13 +129,17 @@ async def process_support_message(message: types.Message, state: FSMContext):
     add_tag(user_id, "support_requested")
     
     # Отправляем уведомление администратору
+# Отправляем уведомление администратору с удобной командой для ответа
     try:
         await bot.send_message(
             ADMIN_ID,
-            f"📨 НОВЫЙ ЗАПРОС В ПОДДЕРЖКУ\n\n"
-            f"👤 Пользователь: @{message.from_user.username or user_name}\n"
-            f"🆔 ID: {user_id}\n"
-            f"💬 Сообщение: {message.text}"
+            f"📨 **НОВЫЙ ЗАПРОС В ПОДДЕРЖКУ**\n\n"
+            f"👤 Пользователь: {user_name}\n"
+            f"🆔 ID: `{user_id}`\n"
+            f"💬 Сообщение: {message.text}\n\n"
+            f"📝 **Чтобы ответить:**\n"
+            f"`/reply {user_id} Твой ответ здесь`",
+            parse_mode="Markdown"
         )
     except:
         pass
@@ -289,6 +293,45 @@ async def handle_unknown(message: types.Message, state: FSMContext):
             "Пожалуйста, используй кнопки меню для навигации 👇",
             reply_markup=main_menu()
         )
+
+# Команда для админа - ответить пользователю
+@dp.message(Command("reply"))
+async def admin_reply(message: types.Message):
+    # Проверяем, что это админ
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ У вас нет прав для этой команды")
+        return
+    
+    # Формат: /reply user_id текст ответа
+    try:
+        parts = message.text.split(maxsplit=2)
+        if len(parts) < 3:
+            await message.answer(
+                "❌ Неверный формат!\n\n"
+                "Используй: `/reply 123456789 Твой текст ответа`\n\n"
+                "Где 123456789 — ID пользователя",
+                parse_mode="Markdown"
+            )
+            return
+        
+        user_id = int(parts[1])
+        reply_text = parts[2]
+        
+        # Отправляем ответ пользователю
+        await bot.send_message(
+            user_id,
+            f"💬 **Ответ от поддержки:**\n\n{reply_text}\n\n"
+            "✉️ Если остались вопросы — напиши снова в поддержку.",
+            parse_mode="Markdown"
+        )
+        
+        # Подтверждаем админу
+        await message.answer(f"✅ Ответ отправлен пользователю {user_id}")
+        
+    except ValueError:
+        await message.answer("❌ Неверный ID пользователя (должны быть только цифры)")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при отправке: {e}")
 
 # Запуск бота
 async def main():
