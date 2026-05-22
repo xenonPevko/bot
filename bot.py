@@ -83,6 +83,12 @@ async def process_email(message: types.Message, state: FSMContext):
 @dp.message(F.text == "🎁 Забрать бесплатный гайд")
 async def get_guide(message: types.Message):
     user_id = message.from_user.id
+    
+    # Проверяем, получал ли пользователь уже гайд
+    if has_tag(user_id, "guide_downloaded"):
+        await message.answer("📚 Ты уже получал(а) этот гайд! Проверь чат выше или напиши в поддержку, если не нашёл.")
+        return
+    
     add_tag(user_id, "guide_downloaded")
     
     # Отправляем текст с гайдом
@@ -95,7 +101,6 @@ async def get_guide(message: types.Message):
     except Exception as e:
         logging.error(f"PDF not found: {e}")
         await message.answer("⚠️ Файл гайда временно недоступен. Мы отправим его тебе на почту!")
-        # Можно отправить ссылку на файл или просто текст
 
 # Главное меню - Курс
 @dp.message(F.text == "📚 Мой курс «Маркетолог с нуля до PRO»")
@@ -155,6 +160,12 @@ async def show_module_detail(callback: types.CallbackQuery):
     await callback.message.answer(text)
     await callback.answer()
 
+@dp.callback_query(F.data == "ask_support")
+async def support_from_callback(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer(SUPPORT_MODE_TEXT)
+    await state.set_state(UserStates.waiting_for_support_message)
+    await callback.answer()
+
 # Просмотр курса
 @dp.callback_query(F.data == "view_course")
 async def view_course(callback: types.CallbackQuery, state: FSMContext):
@@ -165,15 +176,15 @@ async def view_course(callback: types.CallbackQuery, state: FSMContext):
 # Выбор тарифа
 @dp.callback_query(F.data == "select_tariff")
 async def select_tariff(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer("**Выбери подходящий тариф:**", parse_mode="Markdown")
+    # Формируем одно сообщение со всеми тарифами
+    message_text = "**📊 Выбери подходящий тариф:**\n\n"
     
     for key, tariff in TARIFFS.items():
-        await callback.message.answer(
-            f"⭐ *{tariff['name']}* — {tariff['price']:,} ₽\n\n{tariff['description']}",
-            parse_mode="Markdown"
-        )
+        message_text += f"⭐ *{tariff['name']}* — {tariff['price']:,} ₽\n\n{tariff['description']}\n\n"
     
-    await callback.message.answer("👇 Нажми на кнопку с нужным тарифом:", reply_markup=tariffs_keyboard())
+    message_text += "👇 Нажми на кнопку с нужным тарифом:"
+    
+    await callback.message.answer(message_text, parse_mode="Markdown", reply_markup=tariffs_keyboard())
     await state.set_state(UserStates.selecting_tariff)
     await callback.answer()
 
@@ -224,13 +235,6 @@ async def emulate_payment(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(
         PAYMENT_SUCCESS.format(name, email),
         reply_markup=back_to_menu_keyboard()
-    )
-    
-    # Дополнительно отправляем ссылку на курс (эмуляция)
-    await callback.message.answer(
-        "🔗 **Доступ к курсу:**\nhttps://example.com/course-access\n\n"
-        "🔐 **Пароль для доступа:** NAVIGATOR2024",
-        parse_mode="Markdown"
     )
     
     await state.clear()

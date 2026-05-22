@@ -42,7 +42,6 @@ def tariffs_keyboard():
 def payment_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 ОПЛАТИТЬ (тестовый режим)", callback_data="pay_now")],
-        [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_payment")],
         [InlineKeyboardButton(text="🔙 Назад к тарифам", callback_data="back_to_tariffs")]
     ])
 
