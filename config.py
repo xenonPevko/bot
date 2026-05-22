@@ -1,4 +1,4 @@
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Замени на свой токен от @BotFather
+BOT_TOKEN = "8426358910:AAGsrd_bzXa0pLehMIBfd1g_nsxDQmiYKn4"  
 
 # ID администратора/куратора (кто получает сообщения в поддержку)
-ADMIN_ID = 123456789  # Замени на свой Telegram ID
+ADMIN_ID = 900075765  
