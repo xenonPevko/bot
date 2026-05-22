@@ -1,10 +1,10 @@
 import asyncio
 import logging
+import sqlite3
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import FSInputFile, URLInputFile
-from aiogram.utils.markdown import hbold
+from aiogram.types import FSInputFile
 
 from config import BOT_TOKEN, ADMIN_ID
 from database import init_db, get_user, save_user, update_user_tariff, mark_paid, add_tag, has_tag, add_support_request
@@ -20,19 +20,18 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Путь к PDF-файлу (создай пустой файл или добавь реальный)
-# Для теста можно создать пустой PDF или скачать любой тестовый
-PDF_PATH = "guide.pdf"  # Положи любой PDF файл в папку с ботом
+# Путь к PDF-файлу
+PDF_PATH = "guide.pdf"
 
-# Приветствие и регистрация
+
+# ==================== КОМАНДА /start ====================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     
-    # Проверяем, есть ли пользователь в БД
     user = get_user(user_id)
     
-    if user and user[1]:  # Если имя уже есть
+    if user and user[1]:
         await message.answer(
             AFTER_NAME.format(user[1]),
             reply_markup=main_menu()
@@ -42,7 +41,8 @@ async def cmd_start(message: types.Message, state: FSMContext):
         await message.answer(WELCOME_TEXT)
         await state.set_state(UserStates.waiting_for_name)
 
-# Обработка имени
+
+# ==================== РЕГИСТРАЦИЯ ====================
 @dp.message(UserStates.waiting_for_name)
 async def process_name(message: types.Message, state: FSMContext):
     name = message.text.strip()
@@ -58,7 +58,7 @@ async def process_name(message: types.Message, state: FSMContext):
     await message.answer(ASK_EMAIL)
     await state.set_state(UserStates.waiting_for_email)
 
-# Обработка email
+
 @dp.message(UserStates.waiting_for_email)
 async def process_email(message: types.Message, state: FSMContext):
     email = message.text.strip()
@@ -79,22 +79,20 @@ async def process_email(message: types.Message, state: FSMContext):
     )
     await state.clear()
 
-# Главное меню - Забрать гайд
+
+# ==================== ГЛАВНОЕ МЕНЮ ====================
 @dp.message(F.text == "🎁 Забрать бесплатный гайд")
 async def get_guide(message: types.Message):
     user_id = message.from_user.id
     
-    # Проверяем, получал ли пользователь уже гайд
     if has_tag(user_id, "guide_downloaded"):
-        await message.answer("📚 Ты уже получал(а) этот гайд! Проверь чат выше или напиши в поддержку, если не нашёл.")
+        await message.answer("📚 Ты уже получал(а) этот гайд! Проверь чат выше 👆")
         return
     
     add_tag(user_id, "guide_downloaded")
     
-    # Отправляем текст с гайдом
     await message.answer(GUIDE_TEXT, reply_markup=after_guide_keyboard())
     
-    # Отправляем PDF файл
     try:
         pdf_file = FSInputFile(PDF_PATH)
         await message.answer_document(pdf_file, caption="📄 Карта старта: от нуля до первого клиента за 14 дней")
@@ -102,7 +100,7 @@ async def get_guide(message: types.Message):
         logging.error(f"PDF not found: {e}")
         await message.answer("⚠️ Файл гайда временно недоступен. Мы отправим его тебе на почту!")
 
-# Главное меню - Курс
+
 @dp.message(F.text == "📚 Мой курс «Маркетолог с нуля до PRO»")
 async def show_course_intro(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -111,25 +109,23 @@ async def show_course_intro(message: types.Message, state: FSMContext):
     await message.answer(COURSE_HEADER, reply_markup=course_modules_keyboard())
     await state.set_state(UserStates.viewing_course)
 
-# Главное меню - Задать вопрос
+
 @dp.message(F.text == "💬 Задать вопрос Анне")
 async def ask_support(message: types.Message, state: FSMContext):
     await message.answer(SUPPORT_MODE_TEXT)
     await state.set_state(UserStates.waiting_for_support_message)
 
-# Обработка сообщений в поддержку
+
+# ==================== ПОДДЕРЖКА ====================
 @dp.message(UserStates.waiting_for_support_message)
 async def process_support_message(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     user = get_user(user_id)
     user_name = user[1] if user else "Неизвестный"
     
-    # Сохраняем запрос в БД
     add_support_request(user_id, message.text)
     add_tag(user_id, "support_requested")
     
-    # Отправляем уведомление администратору
-# Отправляем уведомление администратору с удобной командой для ответа
     try:
         await bot.send_message(
             ADMIN_ID,
@@ -141,13 +137,84 @@ async def process_support_message(message: types.Message, state: FSMContext):
             f"`/reply {user_id} Твой ответ здесь`",
             parse_mode="Markdown"
         )
-    except:
-        pass
+    except Exception as e:
+        logging.error(f"Не удалось отправить уведомление админу: {e}")
     
     await message.answer(SUPPORT_RECEIVED, reply_markup=main_menu())
     await state.clear()
 
-# Обработка callback'ов - Модули курса
+
+# ==================== КОМАНДЫ АДМИНА ====================
+@dp.message(Command("reply"))
+async def admin_reply(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ У вас нет прав для этой команды")
+        return
+    
+    try:
+        parts = message.text.split(maxsplit=2)
+        if len(parts) < 3:
+            await message.answer(
+                "❌ Неверный формат!\n\n"
+                "Используй: `/reply 123456789 Твой текст ответа`\n\n"
+                "Где 123456789 — ID пользователя",
+                parse_mode="Markdown"
+            )
+            return
+        
+        user_id = int(parts[1])
+        reply_text = parts[2]
+        
+        await bot.send_message(
+            user_id,
+            f"💬 **Ответ от поддержки:**\n\n{reply_text}\n\n"
+            "✉️ Если остались вопросы — напиши снова в поддержку.",
+            parse_mode="Markdown"
+        )
+        
+        conn = sqlite3.connect("navigator_bot.db")
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE support_requests SET status = 'answered' WHERE user_id = ? AND status = 'pending'",
+            (user_id,)
+        )
+        conn.commit()
+        conn.close()
+        
+        await message.answer(f"✅ Ответ отправлен пользователю {user_id}")
+        
+    except ValueError:
+        await message.answer("❌ Неверный ID пользователя (должны быть только цифры)")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при отправке: {e}")
+
+
+@dp.message(Command("requests"))
+async def show_requests(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ У вас нет прав для этой команды")
+        return
+    
+    conn = sqlite3.connect("navigator_bot.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, user_id, message, created_at FROM support_requests WHERE status = 'pending' ORDER BY created_at DESC"
+    )
+    requests = cursor.fetchall()
+    conn.close()
+    
+    if not requests:
+        await message.answer("📭 Нет открытых запросов в поддержку")
+        return
+    
+    text = "📋 **Открытые запросы:**\n\n"
+    for req in requests:
+        text += f"🆔 {req[1]} | #{req[0]}\n📝 {req[2][:50]}...\n📅 {req[3]}\n`/reply {req[1]} [ответ]`\n\n"
+    
+    await message.answer(text, parse_mode="Markdown")
+
+
+# ==================== CALLBACK-ОБРАБОТЧИКИ ====================
 @dp.callback_query(F.data.startswith("module_"))
 async def show_module_detail(callback: types.CallbackQuery):
     module_num = callback.data.split("_")[1]
@@ -164,23 +231,23 @@ async def show_module_detail(callback: types.CallbackQuery):
     await callback.message.answer(text)
     await callback.answer()
 
-@dp.callback_query(F.data == "ask_support")
-async def support_from_callback(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer(SUPPORT_MODE_TEXT)
-    await state.set_state(UserStates.waiting_for_support_message)
-    await callback.answer()
 
-# Просмотр курса
 @dp.callback_query(F.data == "view_course")
 async def view_course(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(COURSE_HEADER, reply_markup=course_modules_keyboard())
     await state.set_state(UserStates.viewing_course)
     await callback.answer()
 
-# Выбор тарифа
+
+@dp.callback_query(F.data == "ask_support")
+async def support_from_callback(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.answer(SUPPORT_MODE_TEXT)
+    await state.set_state(UserStates.waiting_for_support_message)
+    await callback.answer()
+
+
 @dp.callback_query(F.data == "select_tariff")
 async def select_tariff(callback: types.CallbackQuery, state: FSMContext):
-    # Формируем одно сообщение со всеми тарифами
     message_text = "**📊 Выбери подходящий тариф:**\n\n"
     
     for key, tariff in TARIFFS.items():
@@ -192,10 +259,10 @@ async def select_tariff(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.selecting_tariff)
     await callback.answer()
 
-# Обработка выбора тарифа
+
 @dp.callback_query(F.data.startswith("tariff_"))
 async def process_tariff_selection(callback: types.CallbackQuery, state: FSMContext):
-    tariff_key = callback.data.split("_")[1]  # start, pro, vip
+    tariff_key = callback.data.split("_")[1]
     tariff = TARIFFS.get(tariff_key)
     
     if not tariff:
@@ -209,10 +276,8 @@ async def process_tariff_selection(callback: types.CallbackQuery, state: FSMCont
     update_user_tariff(user_id, tariff_key)
     add_tag(user_id, f"tariff_selected_{tariff_key}")
     
-    # Сохраняем в состояние
     await state.update_data(selected_tariff=tariff_key, tariff_name=tariff["name"], tariff_price=tariff["price"])
     
-    # Показываем подтверждение платежа
     await callback.message.answer(
         PAYMENT_CONFIRMATION.format(name, tariff["name"], tariff["price"]),
         reply_markup=payment_keyboard()
@@ -220,7 +285,7 @@ async def process_tariff_selection(callback: types.CallbackQuery, state: FSMCont
     await state.set_state(UserStates.confirming_payment)
     await callback.answer()
 
-# Эмуляция оплаты
+
 @dp.callback_query(F.data == "pay_now")
 async def emulate_payment(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -228,52 +293,41 @@ async def emulate_payment(callback: types.CallbackQuery, state: FSMContext):
     name = user[1] if user else "друг"
     email = user[2] if user else "твоя почта"
     
-    data = await state.get_data()
-    tariff_name = data.get("tariff_name", "выбранный тариф")
-    
-    # Отмечаем оплату в БД
     mark_paid(user_id)
     add_tag(user_id, "payment_success")
     
-    # Отправляем сообщение об успешной оплате
+    success_text = PAYMENT_SUCCESS.format(name, email)
+    
     await callback.message.answer(
-        PAYMENT_SUCCESS.format(name, email),
+        success_text,
         reply_markup=back_to_menu_keyboard()
     )
     
     await state.clear()
     await callback.answer("✅ Оплата успешно проведена!")
 
-# Подтверждение оплаты (если пользователь нажал "Я оплатил")
-@dp.callback_query(F.data == "confirm_payment")
-async def confirm_payment(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.answer(
-        "🔄 Мы проверяем статус твоего платежа...\n\n"
-        "💰 Если ты уже оплатил(а), доступ придёт в течение 5 минут на почту.\n\n"
-        "❓ Если что-то пошло не так, напиши в поддержку."
-    )
-    await callback.answer()
 
-# Назад к курсу
 @dp.callback_query(F.data == "back_to_course")
 async def back_to_course(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(COURSE_HEADER, reply_markup=course_modules_keyboard())
     await state.set_state(UserStates.viewing_course)
     await callback.answer()
 
-# Назад к тарифам
+
 @dp.callback_query(F.data == "back_to_tariffs")
 async def back_to_tariffs(callback: types.CallbackQuery, state: FSMContext):
+    message_text = "**📊 Выбери подходящий тариф:**\n\n"
+    
     for key, tariff in TARIFFS.items():
-        await callback.message.answer(
-            f"⭐ *{tariff['name']}* — {tariff['price']:,} ₽\n\n{tariff['description']}",
-            parse_mode="Markdown"
-        )
-    await callback.message.answer("👇 Нажми на кнопку с нужным тарифом:", reply_markup=tariffs_keyboard())
+        message_text += f"⭐ *{tariff['name']}* — {tariff['price']:,} ₽\n\n{tariff['description']}\n\n"
+    
+    message_text += "👇 Нажми на кнопку с нужным тарифом:"
+    
+    await callback.message.answer(message_text, parse_mode="Markdown", reply_markup=tariffs_keyboard())
     await state.set_state(UserStates.selecting_tariff)
     await callback.answer()
 
-# Возврат в главное меню
+
 @dp.callback_query(F.data == "main_menu")
 async def back_to_main_menu(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
@@ -284,7 +338,8 @@ async def back_to_main_menu(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
 
-# Защита от спама - обработка неизвестных сообщений
+
+# ==================== ОБРАБОТКА НЕИЗВЕСТНЫХ СООБЩЕНИЙ (ДОЛЖНА БЫТЬ ПОСЛЕДНЕЙ) ====================
 @dp.message()
 async def handle_unknown(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
@@ -294,50 +349,13 @@ async def handle_unknown(message: types.Message, state: FSMContext):
             reply_markup=main_menu()
         )
 
-# Команда для админа - ответить пользователю
-@dp.message(Command("reply"))
-async def admin_reply(message: types.Message):
-    # Проверяем, что это админ
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("⛔ У вас нет прав для этой команды")
-        return
-    
-    # Формат: /reply user_id текст ответа
-    try:
-        parts = message.text.split(maxsplit=2)
-        if len(parts) < 3:
-            await message.answer(
-                "❌ Неверный формат!\n\n"
-                "Используй: `/reply 123456789 Твой текст ответа`\n\n"
-                "Где 123456789 — ID пользователя",
-                parse_mode="Markdown"
-            )
-            return
-        
-        user_id = int(parts[1])
-        reply_text = parts[2]
-        
-        # Отправляем ответ пользователю
-        await bot.send_message(
-            user_id,
-            f"💬 **Ответ от поддержки:**\n\n{reply_text}\n\n"
-            "✉️ Если остались вопросы — напиши снова в поддержку.",
-            parse_mode="Markdown"
-        )
-        
-        # Подтверждаем админу
-        await message.answer(f"✅ Ответ отправлен пользователю {user_id}")
-        
-    except ValueError:
-        await message.answer("❌ Неверный ID пользователя (должны быть только цифры)")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка при отправке: {e}")
 
-# Запуск бота
+# ==================== ЗАПУСК БОТА ====================
 async def main():
     init_db()
     logging.info("Бот запущен...")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
